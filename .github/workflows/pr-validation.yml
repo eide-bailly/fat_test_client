@@ -1,0 +1,119 @@
+# PR Validation Workflow — Fabric Schema + Repoint Validation + Parameter Confirmation
+# ======================================================================================
+#
+# Workflow 1 of 3 in the three-workflow model (this PR validation gate, the
+# post-merge dev sync, and the release workflow).
+#
+# Trigger: a pull request targeting `dev` or any non-dev
+# environment branch (`prod`) — pull requests
+# into environment branches are the promotion mechanism, so they pass through the same
+# validation gate as PRs into `dev`. This is a VALIDATION-ONLY gate. It
+# never writes to the repo, never touches a Fabric workspace, and never mutates the
+# developer's branch (Locked design decision #2).
+#
+# What this workflow checks (all in-memory; no commits):
+#   1. Python lint — `ruff check` over the repo (dev-environment component config).
+#   2. SQL lint — `sqlfluff lint` when a `.sqlfluff` config is present.
+#   3. dbt parse — `dbt deps` + `dbt parse` when the scaffolded dbt project is
+#      present; evaluates `profiles.yml`, so it runs under the dev environment's
+#      service principal (mapped from the name-prefixed repository secrets).
+#   4. Fabric schema validation — `scripts/validate_fabric.py` confirms fabric.yml
+#      parses and conforms to the project schema.
+#   5. Repoint coverage — `scripts/validate_repoint.py` walks the PR diff and confirms
+#      every cross-workspace item reference in the changed `fabric/` files still
+#      resolves to a stable item identity that exists in the dev workspace's current
+#      tree. Exceptional failure: renamed/deleted item identity, reported in plain
+#      language with remediation.
+#   6. Parameter consistency — `scripts/gen_parameters.py` regenerates `parameter.yml`
+#      from `fabric.yml` and confirms the checked-in `fabric/parameter.yml`
+#      matches (Locked design decision #10).
+#   7. Test suite — `pytest` runs any unit/integration tests that ship with the
+#      scaffolded scripts (no-op if none exist).
+
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - prod
+  # GitHub Actions' `pull_request.branches` filter matches on the TARGET (base)
+  # branch only; it cannot restrict which SOURCE branch pattern (e.g. feature/*)
+  # opens a PR that runs this workflow. Enforce the feature/* -> dev
+  # topology (Locked design decision #4) via a branch protection ruleset on
+  # `dev` (require this workflow as a status check) plus repo
+  # convention — `fat_cicd_apply` automates the ruleset creation.
+
+jobs:
+  validate:
+    name: Validate PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Lint Python (ruff)
+        run: uv run ruff check .
+
+      - name: Lint SQL (sqlfluff)
+        run: |
+          if [ -f .sqlfluff ]; then
+            uv run sqlfluff lint
+          else
+            echo "No .sqlfluff config present; skipping SQL lint."
+          fi
+
+      # dbt parse evaluates `profiles.yml`, which resolves the service-principal
+      # credential and warehouse connection env vars even for a parse-only run —
+      # map them from the dev environment's name-prefixed repository secrets.
+      - name: Parse dbt project
+        env:
+          SERVICE_PRINCIPAL_TENANT_ID: ${{ secrets.DEV_SERVICE_PRINCIPAL_TENANT_ID }}
+          SERVICE_PRINCIPAL_CLIENT_ID: ${{ secrets.DEV_SERVICE_PRINCIPAL_CLIENT_ID }}
+          DBT_ENV_SECRET_SERVICE_PRINCIPAL_CLIENT_SECRET: ${{ secrets.DEV_DBT_ENV_SECRET_SERVICE_PRINCIPAL_CLIENT_SECRET }}
+          DBT_FABRIC_SERVER: ${{ secrets.DEV_DBT_FABRIC_SERVER }}
+          DBT_FABRIC_WAREHOUSE: ${{ secrets.DEV_DBT_FABRIC_WAREHOUSE }}
+        run: |
+          DBT_DIR="fabric/elt/core/dbt_build.DataBuildToolJob/Code/dbt"
+          if [ -d "$DBT_DIR" ]; then
+            cd "$DBT_DIR"
+            uv run dbt deps
+            uv run dbt parse
+          else
+            echo "No dbt project present; skipping dbt parse."
+          fi
+
+      - name: Validate fabric.yml schema
+        run: uv run python scripts/validate_fabric.py --path fabric.yml
+
+      - name: Check out target branch baseline for repoint comparison
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git worktree add "$RUNNER_TEMP/main-baseline" FETCH_HEAD
+
+      - name: Validate repoint consistency (identity churn check)
+        run: |
+          uv run python scripts/validate_repoint.py \
+            --before "$RUNNER_TEMP/main-baseline/fabric" \
+            --after fabric \
+            --config fabric.yml \
+            --env dev
+
+      - name: Confirm fabric/parameter.yml matches fabric.yml
+        run: |
+          uv run python scripts/gen_parameters.py \
+            --path fabric.yml \
+            --output "$RUNNER_TEMP/parameter.generated.yml"
+          diff -u fabric/parameter.yml "$RUNNER_TEMP/parameter.generated.yml"
+
+      - name: Run test suite
+        if: always()
+        run: uv run pytest

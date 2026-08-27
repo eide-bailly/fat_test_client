@@ -1,0 +1,25 @@
+{
+  "fat_version": "0.0.0",
+  "generated_at": "2026-08-27T16:42:12Z",
+  "source_component": "fabric-scripts",
+  "files": {
+    "scripts/_fabric_config.py": "ed70a2c21cf12edaf2df13356e8834fa32c3dd4c6b095e86414702f13c40e1cb",
+    "scripts/_fabric_lro.py": "3b670d73ab88d1e87a0f29d43b0d6fcba3d0a2fb5a918a129f46ffe38830cac5",
+    "scripts/deploy_fabric.py": "fbe3cefbc2ccf78657963506c05eefeff948123a6bb55c2a2c653edb2b41c0eb",
+    "scripts/fabric_git_github_bootstrap.py": "f15a91aacdd2c9ca9ae4556ba051c4586698d8fbc09ee00f56691a7bf68b6a5d",
+    "scripts/fabric_git_sp_bootstrap.py": "85e26f2094016edcd2ccae436d0ea1f4200a87c4a7bae8cca63a597100b9e87d",
+    "scripts/gen_parameters.py": "68236c0ae44b50dd1fdbacf1a94371a725ddb18c9401a29e11328c25e5eab6f2",
+    "scripts/validate_fabric.py": "8b6604ebfc4f453465f150cb13a7a253cce1f13fc758007b5a507983f68cce8f",
+    "scripts/validate_repoint.py": "66824597edfc52f6f29613c3c4f9297abf61ea29c3ac5e7ef69c2d1f5125228b",
+    "tests/conftest.py": "b252ad97e24c1f7f8bd0bf7c86f5c4c4977e99214700146c9e1c9ff4b4fd9cac",
+    "tests/fixtures/fabric.yml": "da00c3dcd64dab7a46fcb9ff28c854758d3956e3ef18f786fb6075d24c4c41f9",
+    "tests/fixtures/invalid_fabric.yml": "7a6452e8ad1a27a2b24f7b6e1645a014df9999f7b289e2795564aadf91aa1f29",
+    "tests/fixtures/parameter.yml": "94b3790ddb67ff803d9701003f1def1cd3996a40a2c5950d19eb6ae9db807192",
+    "tests/fixtures/repoint_tree/fabric/sample_pipeline.DataPipeline/.platform": "701dbd63c89717483cbd772e5472a3953cd12d9d0b84ce58cb38c01149fe9dcd",
+    "tests/test_deploy_fabric.py": "84836eb1990a2abe3dbbfb21a1adf1bd5b6cc8a67d33c2a7ab80e08e0b617673",
+    "tests/test_fabric_git_github_bootstrap.py": "7057150bb918e42f899932d055236ef91d68782af883062f4c43e5885bd0de81",
+    "tests/test_gen_parameters.py": "64b6a32b074f57b3dfd530cd66f43f1078698ff8e51c162f139e92935fc98600",
+    "tests/test_validate_fabric.py": "0546778a589287cd47f02faec295ca6711cc4e47b82a206aff8d8b830b09f8c5",
+    "tests/test_validate_repoint.py": "df3108264eaafc6080b393bdf87ccd06e1ebf449e75dd0156c91b5028dcca51f"
+  }
+}

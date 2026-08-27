@@ -1,0 +1,4 @@
+source_system_id,source_system_name,source_type,is_active,lakehouse_name,file_extension,notes
+1,erp_system,sqlserver,1,lh_fat_test_client,,Primary ERP — replace with actual system name
+2,external_api,api,1,lh_fat_test_client,,REST API source — replace with actual system name
+3,file_drop,file,0,lh_fat_test_client,.csv,File-based source — set is_active=1 when in use

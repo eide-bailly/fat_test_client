@@ -1,0 +1,49 @@
+# profiles.yml — dbt connection profile for Microsoft Fabric (dbt-fabric adapter)
+#
+# Placement: ~/.dbt/profiles.yml  (recommended for local development)
+#            OR dbt/profiles.yml  (project root; requires --profiles-dir . when running dbt)
+#
+# All sensitive values are read from environment variables. Set these in .env
+# (loaded automatically via UV_ENV_FILE=.env) or in the CI/CD pipeline's secret
+# store. Never commit actual values to source control.
+#
+# Required env vars (canonical names from the dev-environment example.env):
+#   SERVICE_PRINCIPAL_TENANT_ID   — Azure AD tenant ID
+#   SERVICE_PRINCIPAL_CLIENT_ID   — Service principal (app registration) client ID
+#   DBT_ENV_SECRET_SERVICE_PRINCIPAL_CLIENT_SECRET — Service principal client secret.
+#                                   The DBT_ENV_SECRET prefix makes dbt scrub the
+#                                   value from logs — do not rename it away.
+#   DBT_FABRIC_SERVER             — Fabric Warehouse TDS endpoint
+#                                   Format: <workspace-guid>.datawarehouse.fabric.microsoft.com
+#   DBT_FABRIC_WAREHOUSE          — Fabric Warehouse name (e.g., wh_data_warehouse)
+#
+# Per-environment server overrides (optional — fall back to DBT_FABRIC_SERVER if not set):
+#   DBT_FABRIC_SERVER_DEV
+#   DBT_FABRIC_SERVER_PROD
+#
+# The fallback below is written as `{% set %}` + a conditional expression rather than
+# a nested env_var() call (e.g. env_var('X_DEV', default=env_var('X'))). Jinja/Python
+# evaluate all arguments before the call executes, so a nested env_var() call would
+# evaluate the inner env_var('DBT_FABRIC_SERVER') unconditionally — making it required
+# even when the scoped override is present and sufficient on its own. The set-then-check
+# form only reads DBT_FABRIC_SERVER when the scoped variable is genuinely unset (empty).
+
+# Replace fat_test_client with the actual project name — must match `profile:` in dbt_project.yml
+'fat_test_client':
+  target: dev
+  outputs:
+    dev: &fabric_conn
+      type: fabric
+      driver: "ODBC Driver 18 for SQL Server"
+      server: "{% set _dev_server = env_var('DBT_FABRIC_SERVER_DEV', '') %}{{ _dev_server if _dev_server else env_var('DBT_FABRIC_SERVER') }}"
+      database: "{{ env_var('DBT_FABRIC_WAREHOUSE') }}"
+      schema: dbo
+      authentication: ServicePrincipal
+      tenant_id: "{{ env_var('SERVICE_PRINCIPAL_TENANT_ID') }}"
+      client_id: "{{ env_var('SERVICE_PRINCIPAL_CLIENT_ID') }}"
+      client_secret: "{{ env_var('DBT_ENV_SECRET_SERVICE_PRINCIPAL_CLIENT_SECRET') }}"
+      threads: 8
+
+    prod:
+      <<: *fabric_conn
+      server: "{% set _prod_server = env_var('DBT_FABRIC_SERVER_PROD', '') %}{{ _prod_server if _prod_server else env_var('DBT_FABRIC_SERVER') }}"

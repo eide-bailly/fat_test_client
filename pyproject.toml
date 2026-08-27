@@ -1,0 +1,41 @@
+[project]
+name = "fat_test_client"
+version = "0.1.0"
+description = ""
+requires-python = ">=3.10"
+dependencies = [
+    "fabric-cicd>=1.1.0",
+    "azure-identity>=1.15",
+    "requests>=2.34.2",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+    "sqlfluff>=4.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["**/notebook-content.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+# E — pycodestyle errors
+# F — pyflakes
+# I — isort (import ordering)
+# UP — pyupgrade (modern Python idioms)
+
+[tool.ruff.lint.isort]
+known-first-party = ["fat_test_client"]
+force-sort-within-sections = true
+split-on-trailing-comma = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"

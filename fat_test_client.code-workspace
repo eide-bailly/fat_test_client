@@ -1,0 +1,66 @@
+{
+    "folders": [
+        {
+            "name": "fat_test_client",
+            "path": "."
+        },
+        {
+            "name": "dbt",
+            "path": "fabric/elt/core/dbt_build.DataBuildToolJob/Code/dbt"
+        },
+        {
+            "name": "fabric",
+            "path": "fabric"
+        }
+    ],
+    "settings": {
+        // Python interpreter — bash/Linux/macOS path.
+        // On Windows: ".venv\\Scripts\\python.exe"
+        "python.defaultInterpreterPath": ".venv/bin/python",
+
+        // Ruff — replaces black, isort, flake8. Never enable both ruff and black.
+        "[python]": {
+            "editor.defaultFormatter": "charliermarsh.ruff",
+            "editor.formatOnSave": true,
+            "editor.codeActionsOnSave": {
+                "source.fixAll.ruff": "explicit",
+                "source.organizeImports.ruff": "explicit"
+            }
+        },
+        "ruff.enable": true,
+        "ruff.lint.enable": true,
+
+        // SQLFluff — T-SQL dialect for Microsoft Fabric / Synapse targets.
+        "sqlfluff.dialect": "tsql",
+        "sqlfluff.executablePath": "${workspaceFolder}/.venv/bin/sqlfluff",
+        "sqlfluff.linter.run": "onSave",
+
+        // Load .env automatically in every integrated terminal session (uv, fab, dbt, etc.).
+        // Covers all harnesses (Claude Code, Copilot, manual) that run commands via the VS Code terminal.
+        "terminal.integrated.env.linux": {
+            "UV_ENV_FILE": ".env"
+        },
+        "terminal.integrated.env.osx": {
+            "UV_ENV_FILE": ".env"
+        },
+        "terminal.integrated.env.windows": {
+            "UV_ENV_FILE": ".env"
+        },
+
+        // Editor defaults
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "files.trimTrailingWhitespace": true,
+        "files.insertFinalNewline": true
+    },
+    "extensions": {
+        "recommendations": [
+            "charliermarsh.ruff",
+            "dorzey.vscode-sqlfluff",
+            "ms-python.python",
+            "ms-toolsai.jupyter",
+            "ms-azuretools.vscode-azureresourcegroups",
+            "ms-fabric.fab-vscode"
+        ]
+    }
+}

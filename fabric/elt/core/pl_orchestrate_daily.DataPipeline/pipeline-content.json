@@ -1,0 +1,329 @@
+{
+    "properties": {
+        "activities": [
+            {
+                "_comment": "Invokes nb_run_dbt_job to seed EPM data so dbt picks up the seed selector.",
+                "name": "RefreshEpmSeeds",
+                "type": "TridentNotebook",
+                "state": "Active",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "notebookId": "9baed09d-5dac-4da0-ba28-e2a9efcf2c26",
+                    "workspaceId": "a94952b2-9783-48cd-b46b-f79240df81a7",
+                    "parameters": {
+                        "data_build_tool_job_id": {
+                            "value": "85acacaa-850a-4826-9805-ca8373153083",
+                            "type": "string"
+                        },
+                        "workspace_id": {
+                            "value": "a94952b2-9783-48cd-b46b-f79240df81a7",
+                            "type": "string"
+                        },
+                        "operation": {
+                            "value": "seed",
+                            "type": "string"
+                        },
+                        "select": {
+                            "value": "epm",
+                            "type": "string"
+                        },
+                        "threads": {
+                            "value": "4",
+                            "type": "int"
+                        },
+                        "engine": {
+                            "value": "Core",
+                            "type": "string"
+                        },
+                        "poll_interval_seconds": {
+                            "value": "20",
+                            "type": "int"
+                        },
+                        "timeout_seconds": {
+                            "value": "3600",
+                            "type": "int"
+                        }
+                    }
+                }
+            },
+            {
+                "_comment": "Rebuilds stg_extract_config after EPM seeds are refreshed, via nb_run_dbt_job.",
+                "name": "RunStgExtractConfig",
+                "type": "TridentNotebook",
+                "state": "Active",
+                "dependsOn": [
+                    {
+                        "activity": "RefreshEpmSeeds",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "notebookId": "9baed09d-5dac-4da0-ba28-e2a9efcf2c26",
+                    "workspaceId": "a94952b2-9783-48cd-b46b-f79240df81a7",
+                    "parameters": {
+                        "data_build_tool_job_id": {
+                            "value": "85acacaa-850a-4826-9805-ca8373153083",
+                            "type": "string"
+                        },
+                        "workspace_id": {
+                            "value": "a94952b2-9783-48cd-b46b-f79240df81a7",
+                            "type": "string"
+                        },
+                        "operation": {
+                            "value": "build",
+                            "type": "string"
+                        },
+                        "select": {
+                            "value": "stg_extract_config",
+                            "type": "string"
+                        },
+                        "threads": {
+                            "value": "4",
+                            "type": "int"
+                        },
+                        "engine": {
+                            "value": "Core",
+                            "type": "string"
+                        },
+                        "poll_interval_seconds": {
+                            "value": "20",
+                            "type": "int"
+                        },
+                        "timeout_seconds": {
+                            "value": "3600",
+                            "type": "int"
+                        }
+                    }
+                }
+            },
+            {
+                "_comment": "Returns one row per active orchestration grouping on the requested schedule. firstRowOnly is false so the full result set feeds the dispatch ForEach.",
+                "name": "LookupSchedules",
+                "type": "Lookup",
+                "state": "Active",
+                "dependsOn": [
+                    {
+                        "activity": "RunStgExtractConfig",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 0,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "source": {
+                        "type": "DataWarehouseSource",
+                        "sqlReaderStoredProcedureName": "epm.lookup_schedules",
+                        "storedProcedureParameters": {
+                            "schedule": {
+                                "value": "@{pipeline().parameters.schedule}",
+                                "type": "String"
+                            },
+                            "pipeline_names": {
+                                "value": "@{pipeline().parameters.pipeline_names}",
+                                "type": "String"
+                            }
+                        },
+                        "queryTimeout": "02:00:00",
+                        "partitionOption": "None"
+                    },
+                    "firstRowOnly": false,
+                    "datasetSettings": {
+                        "annotations": [],
+                        "linkedService": {
+                            "name": "<warehouse_name>",
+                            "properties": {
+                                "annotations": [],
+                                "type": "DataWarehouse",
+                                "typeProperties": {
+                                    "endpoint": "diovcuf5dcjubfowxirzlz2vzy-ilhhs2i2ljpefn36h6t7e76p5e.datawarehouse.fabric.microsoft.com",
+                                    "artifactId": "5691e786-4052-4468-9467-4b26bd70fcf3",
+                                    "workspaceId": "6979ce42-5a1a-425e-b77e-3fa7f27fcfe9"
+                                }
+                            }
+                        },
+                        "type": "DataWarehouseTable",
+                        "schema": []
+                    }
+                }
+            },
+            {
+                "_comment": "Sequential so cross-source ordering is deterministic. Each iteration invokes the child extract-load pipeline identified by @item().pipeline_id, passing orchestration_id as the only parameter.",
+                "name": "ForEach_DispatchExtract",
+                "type": "ForEach",
+                "state": "Active",
+                "dependsOn": [
+                    {
+                        "activity": "LookupSchedules",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "typeProperties": {
+                    "isSequential": true,
+                    "items": {
+                        "value": "@activity('LookupSchedules').output.value",
+                        "type": "Expression"
+                    },
+                    "activities": [
+                        {
+                            "name": "InvokeExtractLoadPipeline",
+                            "type": "InvokePipeline",
+                            "state": "Active",
+                            "dependsOn": [],
+                            "policy": {
+                                "timeout": "0.12:00:00",
+                                "retry": 0,
+                                "retryIntervalInSeconds": 30,
+                                "secureOutput": false,
+                                "secureInput": false
+                            },
+                            "typeProperties": {
+                                "operationType": "InvokeFabricPipeline",
+                                "pipelineId": "@item().pipeline_id",
+                                "workspaceId": "a94952b2-9783-48cd-b46b-f79240df81a7",
+                                "waitOnCompletion": true,
+                                "parameters": {
+                                    "orchestration_id": "@{item().orchestration_id}"
+                                }
+                            },
+                            "externalReferences": {
+                                "connection": "61c69937-21ee-4220-afe4-7d2e2a726f1c"
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "RunDbt",
+                "type": "TridentNotebook",
+                "state": "Active",
+                "dependsOn": [
+                    {
+                        "activity": "ForEach_DispatchExtract",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "policy": {
+                    "timeout": "0.12:00:00",
+                    "retry": 1,
+                    "retryIntervalInSeconds": 30,
+                    "secureOutput": false,
+                    "secureInput": false
+                },
+                "typeProperties": {
+                    "notebookId": "9baed09d-5dac-4da0-ba28-e2a9efcf2c26",
+                    "workspaceId": "a94952b2-9783-48cd-b46b-f79240df81a7",
+                    "parameters": {
+                        "data_build_tool_job_id": {
+                            "value": "85acacaa-850a-4826-9805-ca8373153083",
+                            "type": "string"
+                        },
+                        "workspace_id": {
+                            "value": "a94952b2-9783-48cd-b46b-f79240df81a7",
+                            "type": "string"
+                        },
+                        "operation": {
+                            "value": "build",
+                            "type": "string"
+                        },
+                        "full_refresh": {
+                            "value": {
+                                "value": "@bool(pipeline().parameters.full_refresh)",
+                                "type": "Expression"
+                            },
+                            "type": "bool"
+                        },
+                        "threads": {
+                            "value": "4",
+                            "type": "int"
+                        },
+                        "engine": {
+                            "value": "Core",
+                            "type": "string"
+                        },
+                        "poll_interval_seconds": {
+                            "value": "20",
+                            "type": "int"
+                        },
+                        "timeout_seconds": {
+                            "value": "3600",
+                            "type": "int"
+                        }
+                    }
+                }
+            },
+            {
+                "_comment": "Permanently inactive stub (see fabric-pipelines/descriptor.md's Inactive activity pattern). Its __ITEM_PL_REFRESH_SEMANTIC_MODEL__ token resolves to pl_refresh_semantic_model, a real pipeline shipped by this same component, so the reference is always valid even though the activity never runs.",
+                "name": "Invoke_RefreshSemanticModel",
+                "type": "ExecutePipeline",
+                "state": "Inactive",
+                "onInactiveMarkAs": "Succeeded",
+                "dependsOn": [
+                    {
+                        "activity": "RunDbt",
+                        "dependencyConditions": [
+                            "Succeeded"
+                        ]
+                    }
+                ],
+                "typeProperties": {
+                    "pipeline": {
+                        "referenceName": "70a8bbdf-b79f-495c-958e-83bff21f3789",
+                        "type": "PipelineReference"
+                    },
+                    "waitOnCompletion": true,
+                    "parameters": {}
+                },
+                "policy": {
+                    "secureInput": false,
+                    "secureOutput": false
+                },
+                "linkedService": {
+                    "type": "WorkspaceConnection",
+                    "connectionId": "61c69937-21ee-4220-afe4-7d2e2a726f1c"
+                }
+            }
+        ],
+        "parameters": {
+            "full_refresh": {
+                "type": "bool",
+                "defaultValue": false
+            },
+            "schedule": {
+                "type": "string",
+                "defaultValue": "daily"
+            },
+            "pipeline_names": {
+                "type": "string",
+                "defaultValue": ""
+            }
+        },
+        "variables": {}
+    }
+}

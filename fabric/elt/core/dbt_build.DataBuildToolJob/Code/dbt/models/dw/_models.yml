@@ -1,0 +1,16 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: Calendar dimension table generated from dbt_date_start_date to dim_date_end_date vars.
+    columns:
+      - name: date_day
+        description: Calendar date (DATE).
+        tests:
+          - not_null
+          - unique
+      - name: date_key
+        description: Integer surrogate key (YYYYMMDD).
+        tests:
+          - not_null
+          - unique

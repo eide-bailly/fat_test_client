@@ -1,0 +1,7 @@
+find_replace:
+- find_value: a94952b2-9783-48cd-b46b-f79240df81a7
+  replace_value:
+    prod: 671959da-9603-46b0-a521-a9bdfc5bc263
+- find_value: 6979ce42-5a1a-425e-b77e-3fa7f27fcfe9
+  replace_value:
+    prod: b1fce454-0fd0-4741-bc43-713d88c942d9

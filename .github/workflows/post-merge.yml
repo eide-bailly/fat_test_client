@@ -1,0 +1,74 @@
+# Post-Merge Workflow — Fabric Sync to Dev Workspace
+# ==================================================
+#
+# Workflow 2 of 3 in the three-workflow model (PR validation, this post-merge
+# dev sync, and the release workflow).
+#
+# Trigger: a push to `dev` (i.e., a PR from `feature/*` has just merged).
+#
+# What this workflow does, in order:
+#   1. Validates `fabric.yml` schema (safety net after merge).
+#   2. Confirms `fabric/parameter.yml` consistency against `fabric.yml`.
+#   3. Runs the test suite (no-op if no tests ship with the scaffolded scripts).
+#   4. Synchronizes the dev workspace to the exact commit that triggered this
+#      workflow via `scripts/deploy_fabric.py --git-sync`.
+#
+# IDENTITY: all Fabric REST/Git operations in this workflow run under the dev
+# environment's service principal (Locked design decision #6), mapped from the
+# `DEV_*` name-prefixed repository secrets. SP support for Git
+# integration operations (`git/updateFromGit`) is conditional on every item
+# type in the workspace individually supporting SP auth; this is expected to
+# work but is unverified against a live tenant — verify per-tenant.
+
+name: Post-Merge Dev Sync
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  sync:
+    name: Sync dev workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Validate fabric.yml schema (safety net)
+        run: uv run python scripts/validate_fabric.py --path fabric.yml
+
+      - name: Confirm fabric/parameter.yml matches fabric.yml
+        run: |
+          uv run python scripts/gen_parameters.py \
+            --path fabric.yml \
+            --output "$RUNNER_TEMP/parameter.generated.yml"
+          diff -u fabric/parameter.yml "$RUNNER_TEMP/parameter.generated.yml"
+
+      - name: Run test suite
+        if: always()
+        run: uv run pytest
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Synchronize dev workspace to triggering Git commit
+        env:
+          DEV_WORKSPACE_ID: ${{ secrets.DEV_FABRIC_WORKSPACE_ID }}
+          SERVICE_PRINCIPAL_TENANT_ID: ${{ secrets.DEV_SERVICE_PRINCIPAL_TENANT_ID }}
+          SERVICE_PRINCIPAL_CLIENT_ID: ${{ secrets.DEV_SERVICE_PRINCIPAL_CLIENT_ID }}
+          DBT_ENV_SECRET_SERVICE_PRINCIPAL_CLIENT_SECRET: ${{ secrets.DEV_DBT_ENV_SECRET_SERVICE_PRINCIPAL_CLIENT_SECRET }}
+        run: |
+          uv run python scripts/deploy_fabric.py \
+            --workspace-id "$DEV_WORKSPACE_ID" \
+            --env dev \
+            --git-sync \
+            --expected-commit "${{ github.sha }}"

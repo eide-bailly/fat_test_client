@@ -1,0 +1,108 @@
+version: 2
+
+seeds:
+  - name: source_system
+    description: Registry of source systems that feed this data warehouse.
+    columns:
+      - name: source_system_id
+        data_tests: [not_null, unique]
+      - name: source_system_name
+        data_tests: [not_null, unique]
+      - name: source_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [sqlserver, api, file, lakehouse]
+      - name: is_active
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+
+  - name: extract_config
+    description: Per-object extract configuration. One row per source object.
+    columns:
+      - name: extract_config_id
+        data_tests: [not_null, unique]
+      - name: source_system_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('source_system')
+                field: source_system_id
+      - name: object_name
+        data_tests: [not_null]
+      - name: load_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [incremental, full]
+      - name: update_strategy
+        description: >
+          How rows land in the destination table: overwrite (full replace), append (insert-only),
+          merge (upsert on primary_key_columns), or eom (end-of-month snapshot/partition swap).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [overwrite, append, merge, eom]
+      - name: watermark_column
+        description: >
+          Incremental watermark column. Must be null/empty when update_strategy = 'eom', since
+          EOM loads key off a period boundary rather than a row-level watermark.
+      - name: is_active
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+    data_tests:
+      - dbt_utils.expression_is_true:
+          name: extract_config_eom_has_no_watermark_column
+          arguments:
+            expression: "watermark_column is null or trim(watermark_column) = ''"
+          config:
+            severity: warn
+            where: "update_strategy = 'eom'"
+
+  - name: orchestration
+    description: Pipeline orchestration configuration. One row per pipeline schedule entry.
+    columns:
+      - name: orchestration_id
+        data_tests: [not_null, unique]
+      - name: pipeline
+        description: >
+          Name of the orchestrated pipeline. Must match a pipelines.display_name entry — an
+          orchestration row pointing at an unregistered pipeline is silently dropped by the
+          downstream INNER JOIN otherwise, with nothing reporting it.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('pipelines')
+                field: display_name
+      - name: is_active
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+
+  - name: pipelines
+    description: >
+      Registry of orchestrated Fabric pipelines. The id column holds a placeholder Fabric
+      pipeline GUID that is resolved live to the target environment's GUID at deploy time via
+      parameter.yml's find_replace mechanism, matching the pipeline by display_name. The values
+      checked in here are placeholder GUIDs (visibly so in this exemplar). display_name is the
+      stable pipeline name used to join against orchestration.pipeline.
+    columns:
+      - name: id
+        description: Dev-environment Fabric pipeline GUID (rewritten per environment via find_replace).
+        data_tests: [not_null, unique]
+      - name: display_name
+        description: Stable pipeline name, referenced by orchestration.pipeline.
+        data_tests: [not_null, unique]

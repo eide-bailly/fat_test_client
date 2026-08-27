@@ -1,0 +1,22 @@
+find_replace:
+- find_value: 11111111-0000-0000-0000-000000000001
+  replace_value:
+    prod: 22222222-0000-0000-0000-000000000001
+- find_value: 11111111-0000-0000-0000-000000000002
+  replace_value:
+    prod: 22222222-0000-0000-0000-000000000002
+- find_value: 11111111-0000-0000-0000-000000000010
+  replace_value:
+    prod: 22222222-0000-0000-0000-000000000010
+- find_value: 11111111-0000-0000-0000-000000000011
+  replace_value:
+    prod: 22222222-0000-0000-0000-000000000011
+- find_value: dev
+  replace_value:
+    prod: prod
+  item_type: DataBuildToolJob
+key_value_replace:
+- find_key: $[*].enabled
+  replace_value:
+    prod: false
+  file_path: .schedules

@@ -1,0 +1,175 @@
+# Release Workflow — Parameter Generation + Fabric Deployment
+# ===========================================================
+#
+# Workflow 3 of 3 in the three-workflow model (PR validation, post-merge dev
+# sync, and this release workflow).
+#
+# Trigger: a merge into ANY of the non-dev environment branches declared in
+# `fabric.yml.environments` — this single file is rendered ONCE per project
+# (never once per environment) — or a manual `workflow_dispatch` naming the
+# target environment. The gate is the branch protection rule configured on
+# each target branch (required status checks: the PR validation workflow must
+# pass before a merge can land), applied automatically by `fat_cicd_apply` —
+# unlike the ADO path's manual H7/H8 steps. Review happens on the PR into
+# that branch, not on a GitHub Environment approval: GitHub Environments are
+# deliberately NOT used anywhere in this model (no reviewer gates, no
+# environment-scoped secrets — see docs/cicd.md).
+#
+# Environment selection happens at RUNTIME, not at render time: the
+# "Resolve target environment" step below inspects the triggering ref (or the
+# `workflow_dispatch` input) and matches it against
+# `fabric.yml.environments[].branch` (read fresh from the checked-out repo on
+# every run, never baked in at render time) to determine the single
+# environment this run targets. There is no cross-environment chaining:
+# whichever branch triggered this run, only that one environment is deployed —
+# nothing else.
+#
+# What this workflow does:
+#   1. Resolves the target environment from the triggering ref (or dispatch
+#      input) against `fabric.yml.environments[].branch`.
+#   2. `scripts/gen_parameters.py` compiles `fabric.yml` into
+#      `fabric/parameter.yml` (one pass covers all declared environments).
+#   3. Runs the test suite (no-op if no tests ship with the scaffolded scripts).
+#   4. `scripts/deploy_fabric.py` deploys the CANONICAL (post-bootstrap, real-GUID)
+#      `fabric/` tree to the resolved environment's workspace.
+#
+# IDENTITY: the deploy step runs under the resolved environment's OWN service
+# principal (Locked design decision #6), never a signed-in user. Each
+# environment's SPN credentials and workspace ID are stored as name-prefixed
+# repository secrets (`<PREFIX>_SERVICE_PRINCIPAL_*`, `<PREFIX>_FABRIC_WORKSPACE_ID`);
+# the deploy step maps the resolved environment's prefix onto the unprefixed
+# env-var names the stamped scripts read. SP support for all item types
+# (DataPipeline, Notebook, DataBuildToolJob, SemanticModel, Report — Locked
+# design decision #11) is expected to work but is unverified against a live
+# tenant; verify per-tenant before treating this environment's first
+# deployment as unattended.
+
+name: Release
+
+on:
+  push:
+    branches:
+      - prod
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target non-dev environment to deploy"
+        required: true
+        type: choice
+        options:
+          - prod
+
+jobs:
+  deploy:
+    name: Deploy to resolved environment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Resolve target environment from triggering ref
+        id: resolve
+        env:
+          GH_EVENT_NAME: ${{ github.event_name }}
+          GH_REF_NAME: ${{ github.ref_name }}
+          GH_INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          uv run python - <<'PYEOF'
+          import os
+          import re
+          import sys
+
+          import yaml
+
+          event_name = os.environ["GH_EVENT_NAME"]
+          if event_name == "workflow_dispatch":
+              target_env = os.environ["GH_INPUT_ENVIRONMENT"].strip()
+              if not target_env:
+                  print(
+                      "workflow_dispatch requires the 'environment' input.",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+          else:
+              branch_name = re.sub(r"^refs/heads/", "", os.environ["GH_REF_NAME"])
+              with open("fabric.yml", encoding="utf-8") as fh:
+                  config = yaml.safe_load(fh) or {}
+              target_env = None
+              for env in config.get("environments", []) or []:
+                  name = env.get("name")
+                  if not name or name == "dev":
+                      continue
+                  branch = env.get("branch") or name
+                  if branch == branch_name:
+                      target_env = name
+                      break
+              if target_env is None:
+                  print(
+                      f"No non-dev environment in fabric.yml declares "
+                      f"branch {branch_name!r}.",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+
+          print(f"Resolved target environment {target_env!r}.")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"target_env={target_env}\n")
+          PYEOF
+
+      - name: Generate parameter.yml
+        run: |
+          uv run python scripts/gen_parameters.py \
+            --path fabric.yml \
+            --output fabric/parameter.yml
+
+      - name: Run test suite
+        if: always()
+        run: uv run pytest
+
+      # Map the RESOLVED environment's name-prefixed repository secrets onto the
+      # unprefixed env-var names the stamped scripts read (SERVICE_PRINCIPAL_*,
+      # DBT_ENV_SECRET_*). GitHub Actions cannot index the `secrets` context by a
+      # runtime-computed name, so every environment's secrets are surfaced here
+      # under their prefixed names and the shell selects one set by prefix. The
+      # prefix per environment name is fixed at render time (see the `case` below),
+      # so renaming a secret prefix means re-rendering this workflow.
+      - name: Deploy Fabric items to ${{ steps.resolve.outputs.target_env }}
+        env:
+          FAT_TARGET_ENV: ${{ steps.resolve.outputs.target_env }}
+          PROD_FABRIC_WORKSPACE_ID: ${{ secrets.PROD_FABRIC_WORKSPACE_ID }}
+          PROD_SERVICE_PRINCIPAL_TENANT_ID: ${{ secrets.PROD_SERVICE_PRINCIPAL_TENANT_ID }}
+          PROD_SERVICE_PRINCIPAL_CLIENT_ID: ${{ secrets.PROD_SERVICE_PRINCIPAL_CLIENT_ID }}
+          PROD_DBT_ENV_SECRET_SERVICE_PRINCIPAL_CLIENT_SECRET: ${{ secrets.PROD_DBT_ENV_SECRET_SERVICE_PRINCIPAL_CLIENT_SECRET }}
+        run: |
+          case "$FAT_TARGET_ENV" in
+            prod) PREFIX="PROD" ;;
+            *)
+              echo "No secret prefix mapping for environment '$FAT_TARGET_ENV'." >&2
+              exit 1
+              ;;
+          esac
+
+          WORKSPACE_ID_VAR="${PREFIX}_FABRIC_WORKSPACE_ID"
+          TENANT_ID_VAR="${PREFIX}_SERVICE_PRINCIPAL_TENANT_ID"
+          CLIENT_ID_VAR="${PREFIX}_SERVICE_PRINCIPAL_CLIENT_ID"
+          CLIENT_SECRET_VAR="${PREFIX}_DBT_ENV_SECRET_SERVICE_PRINCIPAL_CLIENT_SECRET"
+
+          export SERVICE_PRINCIPAL_TENANT_ID="${!TENANT_ID_VAR}"
+          export SERVICE_PRINCIPAL_CLIENT_ID="${!CLIENT_ID_VAR}"
+          export DBT_ENV_SECRET_SERVICE_PRINCIPAL_CLIENT_SECRET="${!CLIENT_SECRET_VAR}"
+
+          uv run python scripts/deploy_fabric.py \
+            --workspace-id "${!WORKSPACE_ID_VAR}" \
+            --env "$FAT_TARGET_ENV" \
+            --repository fabric

@@ -1,0 +1,49 @@
+config_version: 5
+name: fat_test_client
+client: Ryan Schofield Test Client
+platform: fabric
+orchestrator: fabric-pipelines
+identity:
+  tenant_id: 50511d1a-18bd-4093-95d6-ba2395e755ce
+  deployment_sp_client_id: 6289babd-ac77-49a0-bbfa-e0f84c79fa7a
+provisioned_items:
+- name: lh_fat_test_client
+  type: Lakehouse
+- name: wh_fat_test_client
+  type: Warehouse
+environments:
+- name: dev
+  workspace_id: a94952b2-9783-48cd-b46b-f79240df81a7
+  workspace_name: fat-test-client-dev
+  data_workspace_id: 6979ce42-5a1a-425e-b77e-3fa7f27fcfe9
+  data_workspace_name: fat-test-client-data-dev
+  branch: dev
+  capacity_id: 8c8f75f6-c0ad-4e4f-a058-66c94563c7fd
+  capacity_name: copilotebatesting
+- name: prod
+  workspace_id: 671959da-9603-46b0-a521-a9bdfc5bc263
+  workspace_name: fat-test-client-prod
+  data_workspace_id: b1fce454-0fd0-4741-bc43-713d88c942d9
+  data_workspace_name: fat-test-client-data-prod
+  branch: prod
+  capacity_id: 8c8f75f6-c0ad-4e4f-a058-66c94563c7fd
+  capacity_name: copilotebatesting
+components:
+- name: dev-environment
+- name: dbt-framework
+- name: epm-framework
+- name: fabric-pipelines
+- name: cicd-github
+git_integration:
+  provider: github
+  owner: eide-bailly
+  repository: fat_test_client
+  branch: dev
+  directory: fabric/
+cicd:
+  provider: github
+  owner: eide-bailly
+  repository: fat_test_client
+connections:
+  sharepoint_cahshared: a4a28c55-cf6f-4f40-8e88-67720d44439c
+  pipeline_invoke: 61c69937-21ee-4220-afe4-7d2e2a726f1c

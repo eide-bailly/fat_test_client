@@ -1,0 +1,51 @@
+name: 'fat_test_client'
+version: "1.0.0"
+config-version: 2
+
+profile: 'fat_test_client'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+  - "logs"
+
+dispatch:
+  - macro_namespace: dbt_utils
+    search_order: ["fat_test_client", "dbt_utils"]
+  - macro_namespace: dbt_date
+    search_order: ["fat_test_client", "dbt_date"]
+
+vars:
+  local_timezone: "America/Denver"
+  "dbt_date:time_zone": "America/Denver"
+  metadata_database_name: "wh_fat_test_client"
+  dim_date_start_date: "2015-01-01"
+  dim_date_end_date: "2035-12-31"
+
+seeds:
+  'fat_test_client':
+    +full_refresh: true
+    +schema: reference
+    epm:
+      +schema: epm
+
+models:
+  'fat_test_client':
+    +materialized: table
+    staging:
+      +materialized: view
+      +schema: staging
+      epm:
+        +schema: epm
+    dw:
+      +materialized: truncate_and_insert
+    intermediate:
+      +schema: intermediate

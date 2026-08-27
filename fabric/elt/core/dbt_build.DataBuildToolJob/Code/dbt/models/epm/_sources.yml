@@ -1,0 +1,14 @@
+version: 2
+
+sources:
+  - name: epm
+    description: EPM framework tables written by the extract pipeline.
+    schema: epm
+    tables:
+      - name: watermark_state
+        description: Watermark state written by the extract pipeline after each successful load.
+        columns:
+          - name: source_system_id
+            data_tests: [not_null]
+          - name: object_name
+            data_tests: [not_null]

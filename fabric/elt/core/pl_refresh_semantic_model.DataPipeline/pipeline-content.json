@@ -1,0 +1,32 @@
+{
+    "properties": {
+        "activities": [
+            {
+                "_comment": "[fat] placeholder for __ITEM_<SEMANTIC_MODEL_NAME>__",
+                "name": "RefreshSemanticModel",
+                "type": "WebActivity",
+                "state": "Inactive",
+                "onInactiveMarkAs": "Succeeded",
+                "dependsOn": [],
+                "typeProperties": {
+                    "url": "https://api.fabric.microsoft.com/v1/workspaces/a94952b2-9783-48cd-b46b-f79240df81a7/items/00000000-0000-0000-0000-000000000000/jobs/instances",
+                    "method": "POST",
+                    "headers": {
+                        "Content-Type": "application/json"
+                    },
+                    "body": {
+                        "executionData": {
+                            "type": "Full"
+                        }
+                    },
+                    "authentication": {
+                        "type": "MSI",
+                        "resource": "https://api.fabric.microsoft.com"
+                    }
+                }
+            }
+        ],
+        "parameters": {},
+        "variables": {}
+    }
+}

@@ -1,0 +1,6 @@
+# Deliberately invalid: missing the required top-level `name` field.
+environments:
+  - name: dev
+    workspace_id: 11111111-0000-0000-0000-000000000001
+  - name: prod
+    workspace_id: 22222222-0000-0000-0000-000000000001

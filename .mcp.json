@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "fat": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/eide-bailly/fabric-agentic-toolkit@feature/add-github-support",
+        "fat-mcp"
+      ],
+      "env": {
+        "UV_ENV_FILE": ".env"
+      }
+    }
+  }
+}

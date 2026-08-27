@@ -1,0 +1,28 @@
+version: 2
+
+# sources.yml — example dbt source definition for a Fabric Warehouse schema.
+#
+# Adaptation notes:
+#   - Replace {source_name} with the source system name in snake_case (e.g., business_central, netsuite).
+#   - Replace {warehouse_name} with the Fabric Warehouse name (matches DBT_FABRIC_WAREHOUSE env var).
+#   - Replace {raw_schema} with the schema in that warehouse where raw/ingested tables land
+#     (e.g., raw, landing, ingest).
+#   - Add one <table> entry per source table. The `name` is what dbt models reference via
+#     {{ source('{source_name}', 'table_name') }}.
+#   - The `database` field is optional when the profile's `database` already points to the
+#     right warehouse. Specify it explicitly when sourcing from a different warehouse.
+
+sources:
+  - name: '{source_name}'
+    description: "Raw data ingested from {source_name} into the Fabric Warehouse."
+    database: '{warehouse_name}'   # Fabric Warehouse name; omit if same as profile default
+    schema: '{raw_schema}'         # Schema where raw tables land (e.g., raw, landing)
+    tables:
+      - name: '{table_name}'
+        description: "Replace with a description of this table."
+        # columns:
+        #   - name: id
+        #     description: "Primary key."
+        #     tests:
+        #       - unique
+        #       - not_null

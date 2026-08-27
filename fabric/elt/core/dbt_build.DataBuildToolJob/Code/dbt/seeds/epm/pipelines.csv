@@ -1,0 +1,4 @@
+id,display_name,notes
+00000000-0000-0000-0000-000000000001,pl_extract_erp,Placeholder Fabric pipeline GUID. The actual pipeline GUID for the deployed environment is resolved live at deploy time via parameter.yml find_replace, matching this pipeline by display_name.
+00000000-0000-0000-0000-000000000002,pl_ingest_files,Placeholder Fabric pipeline GUID. The actual pipeline GUID for the deployed environment is resolved live at deploy time via parameter.yml find_replace, matching this pipeline by display_name.
+00000000-0000-0000-0000-000000000003,pl_extract_api,Placeholder Fabric pipeline GUID. The actual pipeline GUID for the deployed environment is resolved live at deploy time via parameter.yml find_replace, matching this pipeline by display_name.

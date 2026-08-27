@@ -1,0 +1,30 @@
+{
+    "_comment_purpose": "Recommended .claude/settings.json for Fabric data engineering projects. Copy to <project-root>/.claude/settings.json and adjust as needed.",
+    "_comment_allowlist": "The allow list below covers read-only and idempotent dev-loop commands that are safe to approve automatically. Anything that provisions, deploys, deletes, or touches a production resource must remain manual — remove entries that do not apply to this project's toolchain.",
+
+    "env": {
+        "UV_ENV_FILE": ".env"
+    },
+
+    "permissions": {
+        "allow": [
+            "Bash(uv run ruff check*)",
+            "Bash(uv run ruff format*)",
+            "Bash(uv run sqlfluff lint*)",
+            "Bash(uv run sqlfluff parse*)",
+            "Bash(uv run dbt parse*)",
+            "Bash(uv run dbt compile*)",
+            "Bash(uv run dbt ls*)",
+            "Bash(uv run pytest*)",
+            "Bash(fab list*)",
+            "Bash(fab get*)",
+            "Bash(fab workspace list*)",
+            "Bash(git status*)",
+            "Bash(git diff*)",
+            "Bash(git log*)",
+            "Bash(git show*)",
+            "Bash(git branch*)"
+        ],
+        "deny": []
+    }
+}

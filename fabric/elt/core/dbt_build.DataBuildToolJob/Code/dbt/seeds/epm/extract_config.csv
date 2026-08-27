@@ -1,0 +1,4 @@
+extract_config_id,orchestration_id,source_system_id,object_name,watermark_column,watermark_type,load_type,is_active,destination_table_schema,destination_table_name,update_strategy,query_params,parameter_config,primary_key_columns,custom_config
+1,1,1,source_table_a,modified_date,datetime,incremental,1,raw,source_table_a,merge,,,,
+2,1,1,source_table_b,,none,full,1,raw,source_table_b,overwrite,,,,
+3,3,2,api_endpoint_a,updated_at,datetime,incremental,1,raw,api_endpoint_a,append,,,,

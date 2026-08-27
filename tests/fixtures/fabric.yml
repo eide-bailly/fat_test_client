@@ -1,0 +1,22 @@
+name: sample-project
+environments:
+  - name: dev
+    workspace_id: 11111111-0000-0000-0000-000000000001
+    data_workspace_id: 11111111-0000-0000-0000-000000000002
+    items:
+      elt_pipeline: 11111111-0000-0000-0000-000000000010
+      dbt_build: 11111111-0000-0000-0000-000000000011
+    overrides:
+      schedules_enabled: true
+      dbt_target: dev
+  - name: prod
+    workspace_id: 22222222-0000-0000-0000-000000000001
+    data_workspace_id: 22222222-0000-0000-0000-000000000002
+    items:
+      elt_pipeline: 22222222-0000-0000-0000-000000000010
+      dbt_build: 22222222-0000-0000-0000-000000000011
+    overrides:
+      schedules_enabled: false
+      dbt_target: prod
+connections:
+  source_sql: 33333333-0000-0000-0000-000000000001

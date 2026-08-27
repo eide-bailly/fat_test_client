@@ -1,0 +1,4 @@
+orchestration_id,source_system_name,pipeline,load_type,schedule,is_active
+1,erp_system,pl_extract_erp,incremental,daily,1
+2,file_drop,pl_ingest_files,full,daily,0
+3,external_api,pl_extract_api,incremental,daily,1

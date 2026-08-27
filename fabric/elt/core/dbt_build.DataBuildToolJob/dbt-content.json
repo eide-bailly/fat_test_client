@@ -1,0 +1,28 @@
+{
+  "project": {
+    "projectType": "OneLake",
+    "folderPath": "dbt"
+  },
+  "profile": {
+    "profileType": "DataWarehouse",
+    "schema": "dw",
+    "connectionSettings": {
+      "name": "wh_fat_test_client",
+      "properties": {
+        "type": "DataWarehouse",
+        "typeProperties": {
+          "workspaceId": "6979ce42-5a1a-425e-b77e-3fa7f27fcfe9",
+          "artifactId": "5691e786-4052-4468-9467-4b26bd70fcf3",
+          "endPoint": "diovcuf5dcjubfowxirzlz2vzy-ilhhs2i2ljpefn36h6t7e76p5e.datawarehouse.fabric.microsoft.com"
+        }
+      }
+    }
+  },
+  "command": {
+    "operation": "build",
+    "arguments": {
+      "exclude": "",
+      "threads": 4
+    }
+  }
+}
