@@ -294,3 +294,60 @@ Phases 0, 1, 2 (with workarounds), 4 (with a workaround), and 5 (with a self-hea
 - **Independently verified via `gh secret list --repo eide-bailly/fat_test_client`**: all 8 name-prefixed secrets present with real creation timestamps, confirming the tool's report is accurate this time (not just self-reported).
 
 **Checkpoint 6 — repository/secrets portion complete and independently verified.** Workflow-file and branch-protection completion is correctly deferred to Phase 7 (canonical commit/push creates the `dev`/`prod` branches and workflow files on the remote) — not attempted yet in this run.
+
+---
+
+## Phase 7 — Canonical commit
+
+- Ran Phase 7's guardrail checks before committing: zero-byte files under `fabric/` (none), `dbt_packages`/`target`/`logs` inside the `DataBuildToolJob` payload (none), per-developer `.user.yml` (none), and every `.platform` file's `logicalId` is a real, non-placeholder UUID (confirmed for all 4 items). All clean.
+- Reviewed `git status`/`git diff --staged` before committing per the global git workflow: `.env` correctly excluded (`.gitignore` covers it), only `.env.example` (template, no real values) staged. 75 files, 10,181 insertions — the full scaffolded project plus `RUN_LOG.md`/`prompt.md` (included at the user's explicit choice, since they're this exercise's own artifacts rather than project content).
+- Committed (`7cf8cc6`) and pushed to `origin/dev` — **this created the `dev` branch on GitHub** (the repo previously had only `main`). This is the first Git action performed on the caller's behalf being explicitly the *human's* workflow step, per FAT's design (FAT itself never does this) — done here directly via `git`, not through any `fat_*` tool.
+- Verified independently: `gh api repos/eide-bailly/fat_test_client/branches` → `dev`, `main`. `gh api ".../contents/.github/workflows?ref=dev"` → all 3 workflow files present on `dev`.
+
+**Checkpoint 7 — passed.**
+
+---
+
+## Phase 7 (continued) — re-running `fat_cicd_apply`, tenth defect found and fixed
+
+- Re-ran `fat_cicd_plan`/`fat_cicd_apply` after the `dev` push. `branch-protection:dev` now correctly reports `"configured"` (real success — branch exists now). But `workflow:pr-validation`/`post-merge`/`release` still reported `"pending"` even though independently verified present on `dev` via `gh api ".../contents/.github/workflows?ref=dev"`.
+- **Tenth defect, confirmed in source**: `GitHubClient.get_workflow_file(path)` in `tool/fat/github/client.py` called the contents API with no `ref=` query parameter, so GitHub silently defaults to the repository's *default* branch (`main`, since `dev` was not yet the default). The workflow files live on `dev`, not `main`, so the check reported them absent — a false negative structurally identical in shape to the Phase 2 SQLEndpoint-matching defect (a lookup silently resolving against the wrong target instead of the caller's intended one). This would reproduce on every GitHub-provider project until the dev branch happens to become the repo's default branch.
+- **Fixed and verified in the same session**, same toolkit repo/branch:
+  - `GitHubClient.get_workflow_file` now accepts an optional `ref` and appends it as `?ref=<branch>` (URL-encoded) when given.
+  - `_ensure_workflow` (in `tool/fat/cicd/github_apply.py`) now accepts and threads through a `ref` parameter; its call site now passes `ref=plan.dev_branch`.
+  - Fixed one test double (`FakeGitHubClient.get_workflow_file`) whose fixed signature would've broken on the new kwarg, and added `workflow_refs_requested` tracking to it.
+  - Added 2 regression tests: one confirming `get_workflow_file` appends `?ref=` correctly at the client level, one confirming `apply_github_cicd_plan` threads `plan.dev_branch` through to every workflow check.
+  - Full suite: **1117 passed, 1 skipped**. `ruff check`/`ruff format` clean.
+- Committed (`ebbc3ee`), pushed, and MCP reconnected by the user. Re-ran `fat_init_assess` (fresh context) → `fat_cicd_plan` → `fat_cicd_apply`: **`status: "succeeded"`**, all 3 `workflow:*` entries now `"verified"`, `branch-protection:dev` `"adopted"` (real success, matching the plan's own `adopt` action — protection was already applied from the previous run). `branch-protection:prod` correctly still `"pending"` — the `prod` branch doesn't exist yet, expected until a promotion push happens.
+
+**Checkpoint 6 — fully complete for the dev side.** `prod` branch protection remains outstanding pending the `prod` branch's existence (not attempted in this run — creating it would require a promotion PR/push, out of scope for the initial bootstrap).
+
+---
+
+## Phase 8 — Fabric Git connect (deferred path), revisiting the Phase 3 wrong-connection defect
+
+### Diagnosed and fixed the eleventh defect: `discover_github_connection` silently guessed among unrelated connections
+- Investigated the fifth defect flagged back in Phase 3 (`fat_fabric_git_plan` discovered `fabric-unicorn-demo`, an unrelated prior connection, instead of the `github-fat-test-client-pat` connection created earlier in that same session).
+- Found the root cause in `tool/fat/git_integration/pat_connection.py::discover_github_connection`: it returned the **first** `GitHubSourceControl`-type connection found via `list_connections`, with no filtering by name, owner, or repository, and no correctness check. `_check_github_connection` in `plan.py` called it with no `owner`/`repository` context at all.
+- This is the same category of bug Guardrail 2 already names for the Git *target* itself ("never accept a global provider default when the project declares a specific repo target") — just unaddressed for the *connection that authenticates it*.
+- **Fixed**: `discover_github_connection` now takes optional `owner`/`repository`. Behavior: exactly one candidate → use it (preserves the common single-connection-tenant case unchanged); 2+ candidates → prefer an exact match against `default_pat_connection_display_name(owner, repository)` (the same deterministic naming convention already used for auto-created connections); 2+ candidates with no name match → **refuse to guess**, return `None` so the normal "create one" path runs instead of silently reusing an unrelated connection. `plan.py`'s call site now threads `target.owner`/`target.repository` through.
+- Added 2 regression tests (`test_discover_github_connection_refuses_to_guess_among_unrelated_candidates`, `test_discover_github_connection_prefers_the_exact_naming_convention_match`). Full suite: **1119 passed, 1 skipped**. `ruff check`/`ruff format` clean.
+- **Not yet committed/pushed/verified live** at time of writing.
+
+### Fix verified live, Phase 8 connect + initialize completed
+- Fix committed (`4143ed0`), pushed, reconnected. Fresh `fat_init_assess` → `fat_fabric_git_plan(env=dev)`: `git-github-connection` check now correctly reports `"No GitHub source-control Fabric connection exists yet — apply will create 'github-eide-bailly-fat_test_client' from the GitHub PAT available in the environment"` — no longer silently selecting the unrelated `fabric-unicorn-demo` connection.
+- `fat_fabric_git_connect` → `status: "succeeded"`, `connect.skipped: false`, `connection_id: 9d285d44-...` — a **newly created, correctly-named** connection (confirming the fix's create-path also works, not just the refusal path).
+- `fat_fabric_git_initialize(workspace_id, initialization_strategy="PreferWorkspace")` → `status: "succeeded"`.
+- Verified independently via `fat_fabric_git_status`: `connection.connected: true`, `provider: GitHub`, `owner: eide-bailly`, `repository: fat_test_client`, `branch: dev`, `directory: /fabric`. `has_unmanaged_items: true`, `change_count: 6` — a non-blocking warning per the tool's own status contract (Fabric's internal serialization commonly differs slightly from the checked-in files immediately after first connect; not investigated further as an active blocker since the connection itself is confirmed live and correct).
+
+**Checkpoint 8 — passed.** Dev workspace is Git-connected to the correct GitHub repo/branch/directory, using a connection created specifically for this project.
+
+### SPN Git credential bootstrap
+- Checked whether the deployment SPN already had access to the newly-created connection (`9d285d44-...`) via `fab api -X get "connections/<id>/roleAssignments"` — only my own user identity had `Owner`. Shared it with the SPN via `fat_provision_share_connection(env=dev, connection_id=9d285d44-...)` → `status: "shared"`.
+- Ran `scripts/fabric_git_github_bootstrap.py set-credentials --workspace-id <dev> --connection-id 9d285d44-...` → succeeded, `myGitCredentials.source: "ConfiguredConnection"`.
+- Ran `validate-sync` (dry-run): `workspaceHead` and `remoteCommitHash` both equal `7cf8cc6...` — the exact SHA of the canonical commit pushed in Phase 7. Workspace already synced; no `updateFromGit` needed. The 6 listed changes (Warehouse/Lakehouse "Added", 4 items "Modified") are Fabric's own internal git-diff bookkeeping immediately after first connect, not an actual drift — consistent with `workspaceHead == remoteCommitHash`.
+- Ran `validate-sync --apply` per the documented 4-step sequence for completeness — correctly a no-op (same "already synced" result), consistent with Guardrail 1 (no `updateFromGit` call was made or needed).
+
+**Phase 8 fully complete**, SPN Git credentials wired and verified independently via direct Fabric API calls (`roleAssignments`, `myGitCredentials`, `git/status`).
+
+<!-- trigger pr-validation workflow -->
