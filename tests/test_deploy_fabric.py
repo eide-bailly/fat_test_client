@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 import re
@@ -260,8 +259,8 @@ def test_main_retries_once_via_two_pass_recovery_on_publish_error(
     unassigned-capacity check) — main() must catch the class fabric-cicd actually
     raises, or the two-pass retry silently never runs. No "dev" environment is
     configured, so proactive resolution is skipped and the reactive retry path
-    (`_retry_publish_after_partial_failure(workspace, dev_workspace_id, publish_error)`)
-    is exercised, matching main()'s actual call signature.
+    (`_retry_publish_after_partial_failure(workspace, dev_workspace_id, publish_error,
+    credential)`) is exercised, matching main()'s actual call signature.
     """
     _patch_credential_env(monkeypatch)
 
@@ -270,7 +269,7 @@ def test_main_retries_once_via_two_pass_recovery_on_publish_error(
     def failing_publish_all_items(workspace: FakeWorkspace) -> None:
         raise publish_error
 
-    retry_calls: list[tuple[object, object, object]] = []
+    retry_calls: list[tuple[object, object, object, object]] = []
     monkeypatch.setattr(deploy_fabric, "FabricWorkspace", FakeWorkspace)
     monkeypatch.setattr(deploy_fabric, "publish_all_items", failing_publish_all_items)
     monkeypatch.setattr(deploy_fabric, "_patch_publish_folders", lambda workspace: None)
@@ -282,8 +281,8 @@ def test_main_retries_once_via_two_pass_recovery_on_publish_error(
     monkeypatch.setattr(
         deploy_fabric,
         "_retry_publish_after_partial_failure",
-        lambda workspace, dev_workspace_id, publish_error: retry_calls.append(
-            (workspace, dev_workspace_id, publish_error)
+        lambda workspace, dev_workspace_id, publish_error, credential: retry_calls.append(
+            (workspace, dev_workspace_id, publish_error, credential)
         ),
     )
     monkeypatch.setattr(
@@ -303,7 +302,7 @@ def test_main_retries_once_via_two_pass_recovery_on_publish_error(
     deploy_fabric.main()
 
     assert len(retry_calls) == 1
-    _workspace, dev_workspace_id, retried_error = retry_calls[0]
+    _workspace, dev_workspace_id, retried_error, _credential = retry_calls[0]
     assert dev_workspace_id is None
     assert retried_error is publish_error
 
@@ -1041,25 +1040,26 @@ def test_git_sync_rejects_post_update_remote_commit_mismatch(
     )
 
 
-def _fake_fab_api_run(responses: dict[str, list[dict[str, Any]]]) -> Any:
-    """Return a `subprocess.run` stand-in for 'fab api -X get workspaces/{id}/items'.
+def _fake_items_get(responses: dict[str, list[dict[str, Any]]]) -> Any:
+    """Return a `requests.get` stand-in for the Fabric 'workspaces/{id}/items' endpoint.
 
-    *responses* maps workspace ID -> the list of item dicts that workspace's 'fab api'
-    call should report.
+    *responses* maps workspace ID -> the list of item dicts that workspace's live
+    item-listing call should report.
     """
 
-    def fake_run(command: list[str], **kwargs: object) -> Any:
-        # command == ["fab", "api", "-X", "get", f"workspaces/{workspace_id}/items"]
-        workspace_id = command[4].split("/")[1]
+    def fake_get(url: str, **kwargs: object) -> FakeResponse:
+        workspace_id = url.split("/workspaces/")[1].split("/items")[0]
+        return FakeResponse(200, {"value": responses[workspace_id]})
 
-        class FakeCompletedProcess:
-            returncode = 0
-            stdout = json.dumps({"value": responses[workspace_id]})
-            stderr = ""
+    return fake_get
 
-        return FakeCompletedProcess()
 
-    return fake_run
+def _patch_items_get(
+    monkeypatch: pytest.MonkeyPatch, responses: dict[str, list[dict[str, Any]]]
+) -> None:
+    """Patch both `requests.get` and `_fabric_headers` for the live items-listing call."""
+    monkeypatch.setattr(deploy_fabric.requests, "get", _fake_items_get(responses))
+    monkeypatch.setattr(deploy_fabric, "_fabric_headers", lambda credential: {})
 
 
 def test_local_item_names_matches_name_dot_item_type_folders(tmp_path: Path) -> None:
@@ -1072,62 +1072,54 @@ def test_local_item_names_matches_name_dot_item_type_folders(tmp_path: Path) -> 
     assert names == {"pl_orchestrate_daily", "pl_refresh_semantic_model"}
 
 
-def test_resolve_item_ids_maps_display_name_to_live_guid_via_fab_api(
+def test_resolve_item_ids_maps_display_name_to_live_guid_via_rest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Coverage for the live item-GUID resolution path that replaced the deleted
-    `_harvest_live_item_guids` (which paginated a raw Fabric REST 'items' call via
-    `requests`). The new path shells out to 'fab api' instead (see
-    `_fetch_workspace_items_live`); this exercises that subprocess call plus the
-    display-name -> GUID mapping in `_resolve_item_ids`, including the "text"-wrapper
-    handling for newer `fab` CLI versions.
+    """Coverage for the live item-GUID resolution path.
+
+    Regression test for a live-fire defect: this path previously shelled out to
+    `fab api -X get workspaces/{id}/items` (see `_fetch_workspace_items_live`),
+    which requires the Fabric CLI to be installed and authenticated — neither of
+    which the scaffolded CI workflows provide. A live `release.yml` run failed
+    with `FileNotFoundError: ... 'fab'` the moment this path ran. It now reuses
+    this script's existing `ClientSecretCredential`-backed REST client
+    (`_get_json`/`_fabric_headers`/`_FABRIC_API`) instead — this exercises that
+    call plus the display-name -> GUID mapping in `_resolve_item_ids`.
     """
-    captured_commands: list[list[str]] = []
+    captured_urls: list[str] = []
 
-    def fake_run(command: list[str], **kwargs: object) -> Any:
-        captured_commands.append(command)
+    def fake_get(url: str, **kwargs: object) -> FakeResponse:
+        captured_urls.append(url)
+        return FakeResponse(
+            200,
+            {
+                "value": [
+                    {"displayName": "pl_refresh_semantic_model", "id": "c" * 36},
+                    {"displayName": "unrelated_item", "id": "d" * 36},
+                ]
+            },
+        )
 
-        class FakeCompletedProcess:
-            returncode = 0
-            stdout = json.dumps(
-                {
-                    "text": {
-                        "value": [
-                            {"displayName": "pl_refresh_semantic_model", "id": "c" * 36},
-                            {"displayName": "unrelated_item", "id": "d" * 36},
-                        ]
-                    }
-                }
-            )
-            stderr = ""
+    monkeypatch.setattr(deploy_fabric.requests, "get", fake_get)
+    monkeypatch.setattr(deploy_fabric, "_fabric_headers", lambda credential: {})
 
-        return FakeCompletedProcess()
-
-    monkeypatch.setattr(deploy_fabric.subprocess, "run", fake_run)
-
-    result = deploy_fabric._resolve_item_ids(WORKSPACE_ID)
+    result = deploy_fabric._resolve_item_ids(WORKSPACE_ID, object())
 
     assert result == {
         "pl_refresh_semantic_model": "c" * 36,
         "unrelated_item": "d" * 36,
     }
-    assert captured_commands == [["fab", "api", "-X", "get", f"workspaces/{WORKSPACE_ID}/items"]]
+    assert captured_urls == [f"https://api.fabric.microsoft.com/v1/workspaces/{WORKSPACE_ID}/items"]
 
 
-def test_fetch_workspace_items_live_raises_item_resolution_error_on_nonzero_exit(
+def test_fetch_workspace_items_live_raises_item_resolution_error_on_http_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeCompletedProcess:
-        returncode = 1
-        stdout = ""
-        stderr = "boom"
+    monkeypatch.setattr(deploy_fabric.requests, "get", lambda url, **kwargs: FakeResponse(500))
+    monkeypatch.setattr(deploy_fabric, "_fabric_headers", lambda credential: {})
 
-    monkeypatch.setattr(
-        deploy_fabric.subprocess, "run", lambda command, **kwargs: FakeCompletedProcess()
-    )
-
-    with pytest.raises(deploy_fabric._ItemResolutionError, match="exited with code 1"):
-        deploy_fabric._fetch_workspace_items_live(WORKSPACE_ID)
+    with pytest.raises(deploy_fabric._ItemResolutionError, match="failed with HTTP 500"):
+        deploy_fabric._fetch_workspace_items_live(WORKSPACE_ID, object())
 
 
 def test_retry_publish_after_partial_failure_adds_find_replace_and_republishes(
@@ -1147,15 +1139,12 @@ def test_retry_publish_after_partial_failure_adds_find_replace_and_republishes(
     workspace.environment = "prod"
     workspace.environment_parameter = {}
 
-    monkeypatch.setattr(
-        deploy_fabric.subprocess,
-        "run",
-        _fake_fab_api_run(
-            {
-                dev_workspace_id: [{"displayName": "pl_refresh_semantic_model", "id": dev_guid}],
-                WORKSPACE_ID: [{"displayName": "pl_refresh_semantic_model", "id": prod_guid}],
-            }
-        ),
+    _patch_items_get(
+        monkeypatch,
+        {
+            dev_workspace_id: [{"displayName": "pl_refresh_semantic_model", "id": dev_guid}],
+            WORKSPACE_ID: [{"displayName": "pl_refresh_semantic_model", "id": prod_guid}],
+        },
     )
 
     published: list[object] = []
@@ -1164,7 +1153,9 @@ def test_retry_publish_after_partial_failure_adds_find_replace_and_republishes(
     monkeypatch.setattr(deploy_fabric.time, "sleep", lambda seconds: sleeps.append(seconds))
 
     publish_error = deploy_fabric.PublishError([("pl_orchestrate_daily", RuntimeError("bad ref"))])
-    deploy_fabric._retry_publish_after_partial_failure(workspace, dev_workspace_id, publish_error)
+    deploy_fabric._retry_publish_after_partial_failure(
+        workspace, dev_workspace_id, publish_error, object()
+    )
 
     assert sleeps == [deploy_fabric._PUBLISH_RETRY_DELAY_SECONDS]
     assert published == [workspace]
@@ -1192,11 +1183,7 @@ def test_retry_publish_after_partial_failure_reraises_when_nothing_new_resolvabl
     workspace.environment = "prod"
     workspace.environment_parameter = {}
 
-    monkeypatch.setattr(
-        deploy_fabric.subprocess,
-        "run",
-        _fake_fab_api_run({dev_workspace_id: [], WORKSPACE_ID: []}),
-    )
+    _patch_items_get(monkeypatch, {dev_workspace_id: [], WORKSPACE_ID: []})
     monkeypatch.setattr(
         deploy_fabric,
         "publish_all_items",
@@ -1208,7 +1195,7 @@ def test_retry_publish_after_partial_failure_reraises_when_nothing_new_resolvabl
 
     with pytest.raises(deploy_fabric.PublishError) as exc_info:
         deploy_fabric._retry_publish_after_partial_failure(
-            workspace, dev_workspace_id, publish_error
+            workspace, dev_workspace_id, publish_error, object()
         )
 
     assert exc_info.value is publish_error
@@ -1252,21 +1239,16 @@ def test_main_resolves_sibling_find_replace_for_split_data_workspace(
             ]
         ),
     )
-    monkeypatch.setattr(
-        deploy_fabric.subprocess,
-        "run",
-        _fake_fab_api_run(
-            {
-                dev_items_workspace_id: [
-                    {"displayName": "pl_refresh_semantic_model", "id": dev_items_guid}
-                ],
-                WORKSPACE_ID: [
-                    {"displayName": "pl_refresh_semantic_model", "id": target_items_guid}
-                ],
-                dev_data_workspace_id: [{"displayName": "lh_bronze", "id": dev_data_guid}],
-                target_data_workspace_id: [{"displayName": "lh_bronze", "id": target_data_guid}],
-            }
-        ),
+    _patch_items_get(
+        monkeypatch,
+        {
+            dev_items_workspace_id: [
+                {"displayName": "pl_refresh_semantic_model", "id": dev_items_guid}
+            ],
+            WORKSPACE_ID: [{"displayName": "pl_refresh_semantic_model", "id": target_items_guid}],
+            dev_data_workspace_id: [{"displayName": "lh_bronze", "id": dev_data_guid}],
+            target_data_workspace_id: [{"displayName": "lh_bronze", "id": target_data_guid}],
+        },
     )
     published: list[Any] = []
     monkeypatch.setattr(
@@ -1301,8 +1283,8 @@ def test_main_skips_data_workspace_resolution_when_data_workspace_id_omitted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Omitting --data-workspace-id (the single-combined-workspace layout) must be a
-    strict no-op for the data-workspace resolution path: no extra 'fab api' calls, and
-    an unchanged find_replace list relative to items-only resolution.
+    strict no-op for the data-workspace resolution path: no extra items-listing calls,
+    and an unchanged find_replace list relative to items-only resolution.
     """
     dev_items_workspace_id = "22222222-2222-2222-2222-222222222222"
     dev_items_guid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -1327,8 +1309,8 @@ def test_main_skips_data_workspace_resolution_when_data_workspace_id_omitted(
             ]
         ),
     )
-    fab_api_commands: list[list[str]] = []
-    fake_run = _fake_fab_api_run(
+    items_requests: list[str] = []
+    fake_get = _fake_items_get(
         {
             dev_items_workspace_id: [
                 {"displayName": "pl_refresh_semantic_model", "id": dev_items_guid}
@@ -1337,11 +1319,12 @@ def test_main_skips_data_workspace_resolution_when_data_workspace_id_omitted(
         }
     )
 
-    def recording_run(command: list[str], **kwargs: object) -> Any:
-        fab_api_commands.append(command)
-        return fake_run(command, **kwargs)
+    def recording_get(url: str, **kwargs: object) -> FakeResponse:
+        items_requests.append(url)
+        return fake_get(url, **kwargs)
 
-    monkeypatch.setattr(deploy_fabric.subprocess, "run", recording_run)
+    monkeypatch.setattr(deploy_fabric.requests, "get", recording_get)
+    monkeypatch.setattr(deploy_fabric, "_fabric_headers", lambda credential: {})
     published: list[Any] = []
     monkeypatch.setattr(
         deploy_fabric, "publish_all_items", lambda workspace: published.append(workspace)
@@ -1366,6 +1349,8 @@ def test_main_skips_data_workspace_resolution_when_data_workspace_id_omitted(
     assert published[0].environment_parameter["find_replace"] == [
         {"find_value": dev_items_guid, "replace_value": {"prod": target_items_guid}}
     ]
-    assert len(fab_api_commands) == 2
-    resolved_workspace_ids = {command[4].split("/")[1] for command in fab_api_commands}
+    assert len(items_requests) == 2
+    resolved_workspace_ids = {
+        url.split("/workspaces/")[1].split("/items")[0] for url in items_requests
+    }
     assert resolved_workspace_ids == {dev_items_workspace_id, WORKSPACE_ID}

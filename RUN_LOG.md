@@ -351,3 +351,19 @@ Phases 0, 1, 2 (with workarounds), 4 (with a workaround), and 5 (with a self-hea
 **Phase 8 fully complete**, SPN Git credentials wired and verified independently via direct Fabric API calls (`roleAssignments`, `myGitCredentials`, `git/status`).
 
 <!-- trigger pr-validation workflow -->
+
+---
+
+## release.yml — thirteenth defect, severe: `fab` CLI dependency with no install step
+
+### First release.yml run — failed
+- Creating and pushing the `prod` branch from `dev` triggered `release.yml` for real. It failed: `FileNotFoundError: [Errno 2] No such file or directory: 'fab'` inside `scripts/deploy_fabric.py`'s `_fetch_workspace_items_live` — called by `_resolve_sibling_find_replace`, which runs whenever a publish targets a **non-dev** environment (resolving dev's literal item GUIDs to the target environment's live GUIDs). This is exactly why `post-merge.yml`'s dev-only git-sync had already succeeded earlier against the same repo — that path never exercises cross-environment resolution.
+
+### Root cause, confirmed in source
+- `_fetch_workspace_items_live` shelled out to `fab api -X get workspaces/{id}/items` — ported verbatim from `tool/fat/deploy/identity.py`'s interactive-agent-flow implementation, where the developer's own `fab auth login` session authenticates the call. This script runs **unattended in CI**, has no such session, and **none of the scaffolded CI workflows install the Fabric CLI at all** (confirmed: no `fab`/Fabric-CLI install step anywhere in `pr-validation.yml`, `post-merge.yml`, or `release.yml`).
+- The fix wasn't "install `fab` in CI" — this same script already authenticates every *other* Fabric API call via the SPN `ClientSecretCredential` and the existing `_get_json`/`_fabric_headers`/`_FABRIC_API` REST helpers (imported from `_fabric_lro.py`). The `fab` CLI shell-out was pure redundant duplication of infrastructure already present in the same file.
+
+### Fixed and verified in source, same toolkit repo/branch
+- Rewrote `_fetch_workspace_items_live` to call the Fabric REST API directly via the existing `_get_json` helper instead of shelling out to `fab`, threading the SPN `credential` through `_resolve_item_ids` → `_resolve_sibling_find_replace` → `_retry_publish_after_partial_failure` and all `main()` call sites. Removed the now-unused `subprocess` import and the `fab`-specific "text"-wrapper response parsing.
+- Rewrote 6 affected tests to mock `requests.get` instead of `subprocess.run` (same fixture/mocking pattern already used elsewhere in the same test file for other Fabric REST calls). Fixed import ordering against the **scaffolded client project's own stricter isort config** (`force-sort-within-sections=true`) — confirmed via this repo's own `TestScaffoldLintCleanliness` test class, which explicitly checks exemplars against the client config, not the toolkit's own looser one.
+- Full suite: **1121 passed, 1 skipped**.
