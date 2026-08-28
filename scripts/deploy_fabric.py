@@ -23,7 +23,6 @@ import logging
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 import time
 import types
@@ -523,63 +522,67 @@ def _local_item_names(repository_directory: str) -> set[str]:
 
 
 class _ItemResolutionError(RuntimeError):
-    """Raised when a live 'fab api' item lookup cannot resolve item GUIDs.
+    """Raised when a live item-listing lookup cannot resolve item GUIDs.
 
     Ported from `tool/fat/deploy/identity.py`'s `ItemResolutionError`. This script
     cannot import that module (no `fat` package in client repos — see AGENTS.md's
-    self-contained-script convention), so identity.py's live-resolution approach
-    (subprocess call to `fab api -X get workspaces/{id}/items`, matching its exact
-    JSON-parsing behaviour, including the "text"-wrapper handling for newer `fab`
-    CLI versions) is duplicated here rather than imported. Never falls back to a
-    placeholder or stale value.
+    self-contained-script convention), so identity.py's live-resolution intent is
+    duplicated here rather than imported. Never falls back to a placeholder or
+    stale value.
     """
 
 
-def _fetch_workspace_items_live(workspace_id: str) -> list[dict[str, Any]]:
-    """Call 'fab api' to list items in *workspace_id* and return the parsed list.
+def _fetch_workspace_items_live(
+    workspace_id: str, credential: ClientSecretCredential
+) -> list[dict[str, Any]]:
+    """Call the Fabric REST API to list items in *workspace_id* and return the parsed list.
 
-    Live API call — not a cache read. Ported from
-    `tool/fat/deploy/identity.py::_fetch_workspace_items`. Raises
-    `_ItemResolutionError` on error.
+    Live API call — not a cache read.
+
+    Uses the same `_get_json`/`_fabric_headers`/`_FABRIC_API` REST helpers (from
+    `_fabric_lro.py`) every other Fabric API call in this script already uses,
+    rather than shelling out to the `fab` CLI as `tool/fat/deploy/identity.py`
+    does in the interactive agent-driven flow (where the developer's own `fab auth
+    login` session is what authenticates it). That approach was ported here
+    verbatim in an earlier version and is wrong for this script's context: an
+    unattended CI run has no interactive `fab` session, the scaffolded CI
+    workflows never install the Fabric CLI at all, and this script already
+    authenticates every *other* Fabric API call via `credential` directly.
+    Confirmed live: a `release.yml` run failed with
+    `FileNotFoundError: [Errno 2] No such file or directory: 'fab'` the moment a
+    non-dev environment's publish needed sibling-item GUID resolution (dev-only
+    deploys never hit this path, which is why post-merge.yml's git-sync had
+    already succeeded against the same repo). Raises `_ItemResolutionError` on
+    error.
     """
+    context = f"listing items for workspace {workspace_id}"
     try:
-        proc = subprocess.run(
-            ["fab", "api", "-X", "get", f"workspaces/{workspace_id}/items"],
-            capture_output=True,
-            text=True,
+        payload = _get_json(
+            f"{_FABRIC_API}/workspaces/{workspace_id}/items", _fabric_headers(credential), context
         )
-    except FileNotFoundError as exc:
-        raise _ItemResolutionError(
-            "'fab' command not found on PATH. Install the Fabric CLI."
-        ) from exc
-
-    if proc.returncode != 0:
-        raise _ItemResolutionError(
-            f"'fab api' exited with code {proc.returncode}. stderr: {proc.stderr.strip()}"
-        )
+    except RuntimeError as exc:
+        raise _ItemResolutionError(str(exc)) from exc
 
     try:
-        response = json.loads(proc.stdout)
-        # Handle wrapped response from newer fab CLI versions
-        if "text" in response and isinstance(response["text"], dict):
-            response = response["text"]
-        return list(response["value"])
-    except (json.JSONDecodeError, KeyError) as exc:
-        raise _ItemResolutionError(f"could not parse 'fab api' response: {exc}") from exc
+        return list(payload["value"])
+    except KeyError as exc:
+        raise _ItemResolutionError(f"{context}: response had no 'value' field") from exc
 
 
-def _resolve_item_ids(workspace_id: str) -> dict[str, str]:
+def _resolve_item_ids(workspace_id: str, credential: ClientSecretCredential) -> dict[str, str]:
     """Resolve every item in *workspace_id* to its live GUID, name -> GUID.
 
-    Live API call (one `fab api` list call) — not a cache read. Ported from
+    Live API call (one items-list call) — not a cache read. Ported from
     `tool/fat/deploy/identity.py::resolve_item_ids`.
     """
-    items = _fetch_workspace_items_live(workspace_id)
+    items = _fetch_workspace_items_live(workspace_id, credential)
     return {item["displayName"]: item["id"] for item in items}
 
 
 def _resolve_sibling_find_replace(
-    workspace: FabricWorkspace, dev_workspace_id: str | None
+    workspace: FabricWorkspace,
+    dev_workspace_id: str | None,
+    credential: ClientSecretCredential,
 ) -> list[dict[str, Any]]:
     """Resolve find_replace entries for sibling items referenced by dev's literal GUID.
 
@@ -590,8 +593,8 @@ def _resolve_sibling_find_replace(
     token) needs that GUID find_replace'd to this workspace's live GUID for the same
     item — but only once that sibling item actually exists live in this workspace.
     Both the dev-side literal GUIDs and this workspace's live GUIDs are resolved live
-    via `fab api` (see `_resolve_item_ids`) rather than read from `fabric.yml`, since
-    per-item GUID maps are no longer authored/generated there.
+    via the Fabric REST API (see `_resolve_item_ids`) rather than read from
+    `fabric.yml`, since per-item GUID maps are no longer authored/generated there.
 
     Returns an empty list (not an error) for names with no live match in this
     workspace yet — a genuinely brand-new item that has never been created here
@@ -611,8 +614,8 @@ def _resolve_sibling_find_replace(
         return []
 
     names = _local_item_names(workspace.repository_directory)
-    dev_item_ids = _resolve_item_ids(dev_workspace_id)
-    target_item_ids = _resolve_item_ids(workspace.workspace_id)
+    dev_item_ids = _resolve_item_ids(dev_workspace_id, credential)
+    target_item_ids = _resolve_item_ids(workspace.workspace_id, credential)
 
     return [
         {"find_value": dev_guid, "replace_value": {workspace.environment: live_guid}}
@@ -659,6 +662,7 @@ def _retry_publish_after_partial_failure(
     workspace: FabricWorkspace,
     dev_workspace_id: str | None,
     publish_error: PublishError,
+    credential: ClientSecretCredential,
 ) -> None:
     """One-time recovery for a genuinely brand-new item with nothing live to harvest yet.
 
@@ -689,7 +693,7 @@ def _retry_publish_after_partial_failure(
     time.sleep(_PUBLISH_RETRY_DELAY_SECONDS)
 
     new_entries = _apply_new_find_replace_entries(
-        workspace, _resolve_sibling_find_replace(workspace, dev_workspace_id)
+        workspace, _resolve_sibling_find_replace(workspace, dev_workspace_id, credential)
     )
     if not new_entries:
         logger.error(
@@ -746,7 +750,7 @@ def main() -> None:
         )
     else:
         _apply_new_find_replace_entries(
-            workspace, _resolve_sibling_find_replace(workspace, dev_workspace_id)
+            workspace, _resolve_sibling_find_replace(workspace, dev_workspace_id, credential)
         )
 
     # Split-layout projects (see --data-workspace-id) keep lakehouses/warehouses in a
@@ -773,7 +777,7 @@ def main() -> None:
             )
             _apply_new_find_replace_entries(
                 workspace,
-                _resolve_sibling_find_replace(data_workspace, dev_data_workspace_id),
+                _resolve_sibling_find_replace(data_workspace, dev_data_workspace_id, credential),
             )
 
     try:
@@ -783,7 +787,7 @@ def main() -> None:
             "Initial publish reported failed item(s); attempting a one-time "
             "two-pass retry (see _retry_publish_after_partial_failure)."
         )
-        _retry_publish_after_partial_failure(workspace, dev_workspace_id, exc)
+        _retry_publish_after_partial_failure(workspace, dev_workspace_id, exc, credential)
 
 
 if __name__ == "__main__":
